@@ -53,9 +53,14 @@ def main(config, out_file):
             else:
                 batch["logits"] = output
             batch["log_probs"] = torch.log_softmax(batch["logits"], dim=-1)
-            batch["log_probs_length"] = model.transform_input_lengths(
-                batch["spectrogram_length"]
-            )
+            if type(model) == torch.nn.DataParallel:
+                batch["log_probs_length"] = model.module.transform_input_lengths( 
+                    batch["spectrogram_length"]
+                )
+            else:
+                batch["log_probs_length"] = model.transform_input_lengths( 
+                    batch["spectrogram_length"]
+                )
             batch["probs"] = batch["log_probs"].exp().cpu()
             batch["argmax"] = batch["probs"].argmax(-1)
             for i in range(len(batch["text"])):
@@ -66,7 +71,7 @@ def main(config, out_file):
                         "ground_trurh": batch["text"][i],
                         "pred_text_argmax": text_encoder.ctc_decode(argmax.cpu().numpy()),
                         "pred_text_beam_search": text_encoder.ctc_beam_search(
-                            batch["probs"][i], batch["log_probs_length"][i], beam_size=100
+                            batch["log_probs"][i], batch["log_probs_length"][i], beam_size=100
                         )[:10],
                     }
                 )

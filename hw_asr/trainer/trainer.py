@@ -15,6 +15,8 @@ from hw_asr.base.base_text_encoder import BaseTextEncoder
 from hw_asr.logger.utils import plot_spectrogram_to_buf
 from hw_asr.metric.utils import calc_cer, calc_wer
 from hw_asr.utils import inf_loop, MetricTracker
+from hw_asr.text_encoder.ctc_beam_char_text_encoder import CTCBeamCharTextEncoder
+from hw_asr.text_encoder.ctc_fast_beam import FastBeamCTCCharTextEncoder
 
 
 class Trainer(BaseTrainer):
@@ -116,6 +118,7 @@ class Trainer(BaseTrainer):
                 )
                 self._log_predictions(**batch)
                 self._log_spectrogram(batch["spectrogram"])
+                self._log_audio(batch["audio"])
                 self._log_scalars(self.train_metrics)
                 # we don't want to reset train metrics at the start of every epoch
                 # because we are interested in recent train metrics
@@ -142,9 +145,14 @@ class Trainer(BaseTrainer):
             batch["logits"] = outputs
 
         batch["log_probs"] = F.log_softmax(batch["logits"], dim=-1)
-        batch["log_probs_length"] = self.model.transform_input_lengths(
-            batch["spectrogram_length"]
-        )
+        if type(self.model) == torch.nn.DataParallel:
+            batch["log_probs_length"] = self.model.module.transform_input_lengths( 
+                batch["spectrogram_length"]
+            )
+        else:
+            batch["log_probs_length"] = self.model.transform_input_lengths( 
+                batch["spectrogram_length"]
+            )
         batch["loss"] = self.criterion(**batch)
         if is_train:
             batch["loss"].backward()
@@ -154,8 +162,19 @@ class Trainer(BaseTrainer):
                 self.lr_scheduler.step()
 
         metrics.update("loss", batch["loss"].item())
-        for met in self.metrics:
-            metrics.update(met.name, met(**batch))
+
+        # to speed up training beam decoding is performed once, not at call of each metrics
+        if type(self.text_encoder) in [CTCBeamCharTextEncoder, FastBeamCTCCharTextEncoder]:  
+            pred_texts = []
+            texts = []
+            for true, probs, length in zip(batch["text"], batch["log_probs"], batch["log_probs_length"]):
+                texts.append(self.text_encoder.normalize_text(true))
+                pred_texts.append(self.text_encoder.ctc_beam_search(probs[:length], length, 10)[0][0])
+            for met in self.metrics:
+                metrics.update(met.name, met(**batch, **{"target_text": texts, "pred_text": pred_texts}))
+        else:
+            for met in self.metrics:
+                metrics.update(met.name, met(**batch))
         return batch
 
     def _evaluation_epoch(self, epoch, part, dataloader):
@@ -182,6 +201,7 @@ class Trainer(BaseTrainer):
             self._log_scalars(self.evaluation_metrics)
             self._log_predictions(**batch)
             self._log_spectrogram(batch["spectrogram"])
+            self._log_audio(batch["audio"])
 
         # add histogram of model parameters to the tensorboard
         for name, p in self.model.named_parameters():
@@ -239,6 +259,10 @@ class Trainer(BaseTrainer):
         spectrogram = random.choice(spectrogram_batch.cpu())
         image = PIL.Image.open(plot_spectrogram_to_buf(spectrogram))
         self.writer.add_image("spectrogram", ToTensor()(image))
+    
+    def _log_audio(self, audio_batch):
+        spectrogram = random.choice(audio_batch.cpu())
+        self.writer.add_audio("audio", spectrogram, sample_rate=self.config["preprocessing"]["sr"])
 
     @torch.no_grad()
     def get_grad_norm(self, norm_type=2):

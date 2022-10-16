@@ -110,3 +110,10 @@ wandb/
 .vscode/
 .idea/
 __MACOSX/
+
+tmp_overlay
+*.sif
+lm
+notebooks/
+dataset_common_voice/
+default_test_model/

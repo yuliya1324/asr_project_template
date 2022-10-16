@@ -8,6 +8,8 @@
       "args": {
       }
     }
+    ,
+    "log_spec": false
   },
   "augmentations": {
     "wave": [],

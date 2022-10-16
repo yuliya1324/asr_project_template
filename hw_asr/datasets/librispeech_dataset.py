@@ -3,6 +3,7 @@ import logging
 import os
 import shutil
 from pathlib import Path
+import re
 
 import torchaudio
 from speechbrain.utils.data_utils import download_file
@@ -28,6 +29,7 @@ class LibrispeechDataset(BaseDataset):
     def __init__(self, part, data_dir=None, *args, **kwargs):
         assert part in URL_LINKS or part == 'train_all'
 
+        self.regex = re.compile("[^a-z ]")
         if data_dir is None:
             data_dir = ROOT_PATH / "data" / "datasets" / "librispeech"
             data_dir.mkdir(exist_ok=True, parents=True)
@@ -86,7 +88,7 @@ class LibrispeechDataset(BaseDataset):
                     index.append(
                         {
                             "path": str(flac_path.absolute().resolve()),
-                            "text": f_text.lower(),
+                            "text": self.regex.sub("", f_text.lower()),  # changed a bit normalization
                             "audio_len": length,
                         }
                     )
